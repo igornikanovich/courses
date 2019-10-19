@@ -169,7 +169,7 @@ def run(students, rooms, format, host, user, passw, database, request):
                                                                      sex ENUM('M', 'F'),
                                                                      FOREIGN KEY (room_id) REFERENCES rooms(room_id) 
                                                                      ON DELETE SET NULL ON UPDATE SET NULL
-                                                                     )""")
+                                                                     ) engine=innodb default charset=utf8""")
     tableStudents.create()
 
     uploadRoomsToSQL = UploaderJSONtoSQL(host, user, passw, database, rooms, """INSERT INTO rooms (room_id, room_name) VALUES (%s,%s)""")
@@ -192,7 +192,7 @@ def run(students, rooms, format, host, user, passw, database, request):
                     AVG((YEAR(CURRENT_DATE)-YEAR(students.birthday))-(RIGHT(CURRENT_DATE,5)<RIGHT(students.birthday,5))) AS age
                     FROM rooms, students
                     WHERE rooms.room_id=students.room_id
-                    GROUP BY room_name ORDER BY age LIMIT 5""")
+                    GROUP BY rooms.room_id ORDER BY age LIMIT 5""")
         req2 = request2.request()
         choice = Choicer().choice(req2, format)
         choice.save()
@@ -214,6 +214,15 @@ def run(students, rooms, format, host, user, passw, database, request):
         choice = Choicer().choice(req4, format)
         choice.save()
 
+    print('Well done!')
+
+# Оптимизация запросов с использованием индексов на мой взгляд нецелесообразна, т.к.
+# мы группируемся по колонкам, которые являются Primary Key для таблиц (room_id в rooms).
+# Во время создания таблиц неявно создается индекс для колонки, которая является Primary Key.
+# Использование индекса для колонок, которые используются в агрегатных функциях,
+# не принесет явной оптимизации, т.к. количество записей, которые будут обрабатываться
+# этими функциями, мало.
+# Но это не точно)
 
 
 def main():
