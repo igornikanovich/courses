@@ -97,9 +97,13 @@ class CreateTable(CreaterSQL):
 
     def create(self):
         db = pymysql.connect(self.host, self.user, self.passw, self.db)
-        cursor = db.cursor()
-        cursor.execute(self.sql)
-        db.close()
+        try:
+            cursor = db.cursor()
+            cursor.execute(self.sql)
+        except pymysql.Error as e:
+            print("MySQL Error [%d]: %s" % (e.args[0], e.args[1]))
+        finally:
+            db.close()
 
 class UploaderJSONtoSQL:
 
@@ -118,8 +122,8 @@ class UploaderJSONtoSQL:
         try:
             cursor.executemany(self.sql, values)
             db.commit()
-        except Exception as e:
-            print('Error loading data \n', e)
+        except pymysql.Error as e:
+            print("MySQL Error [%d]: %s" % (e.args[0], e.args[1]))
             db.rollback()
         finally:
             db.close()
@@ -141,8 +145,8 @@ class RequestorSQL:
             cursor.execute(self.sql)
             out_data = [dict(zip([key[0] for key in cursor.description], row)) for row in cursor.fetchall()]
             return out_data
-        except Exception as e:
-            print('Error loading data \n', e)
+        except pymysql.Error as e:
+            print("MySQL Error [%d]: %s" % (e.args[0], e.args[1]))
         finally:
             db.close()
 
@@ -156,65 +160,71 @@ def run(students, rooms, format, host, user, passw, database, request):
     db.create()
 
     tableRooms = CreateTable(host, user, passw, database, """CREATE TABLE rooms (
-                                                                     room_id INT NOT NULL PRIMARY KEY,
-                                                                     room_name VARCHAR(10)
+                                                                     id INT NOT NULL PRIMARY KEY,
+                                                                     name VARCHAR(10)
                                                                      ) engine=innodb default charset=utf8""")
     tableRooms.create()
 
     tableStudents = CreateTable(host, user, passw, database, """CREATE TABLE students (
                                                                      birthday DATE,
-                                                                     student_id INT NOT NULL PRIMARY KEY,
-                                                                     student_name VARCHAR(30),
-                                                                     room_id INT,
+                                                                     id INT NOT NULL PRIMARY KEY,
+                                                                     name VARCHAR(30),
+                                                                     room INT,
                                                                      sex ENUM('M', 'F'),
-                                                                     FOREIGN KEY (room_id) REFERENCES rooms(room_id) 
+                                                                     FOREIGN KEY (room) REFERENCES rooms(id) 
                                                                      ON DELETE SET NULL ON UPDATE SET NULL
                                                                      ) engine=innodb default charset=utf8""")
     tableStudents.create()
 
-    uploadRoomsToSQL = UploaderJSONtoSQL(host, user, passw, database, rooms, """INSERT INTO rooms (room_id, room_name) VALUES (%s,%s)""")
+    uploadRoomsToSQL = UploaderJSONtoSQL(host, user, passw, database, rooms, """INSERT INTO rooms (id, name) VALUES (%s,%s)""")
     uploadRoomsToSQL.upload()
 
     uploadStudentsToSQL = UploaderJSONtoSQL(host, user, passw, database, students,
-                                            """INSERT INTO students (birthday, student_id, student_name, room_id, sex) 
+                                            """INSERT INTO students (birthday, id, name, room, sex) 
                                                VALUES (%s, %s, %s, %s, %s)""")
     uploadStudentsToSQL.upload()
     if request == '1':
-        request1 = RequestorSQL(host, user, passw, database, """SELECT rooms.room_name, COUNT(students.student_id) AS countStudents
-                                                                FROM rooms, students
-                                                                WHERE rooms.room_id=students.room_id
-                                                                GROUP BY rooms.room_id""")
+        request1 = RequestorSQL(host, user, passw, database, """SELECT rooms.name, COUNT(students.id) AS num
+                                                                FROM rooms
+                                                                JOIN students ON rooms.id = students.room
+                                                                GROUP BY rooms.id""")
         req1 = request1.request()
         choice = Choicer().choice(req1, format)
         choice.save()
+        print('Request 1 well done!')
     elif request == '2':
-        request2 = RequestorSQL(host, user, passw, database, """SELECT rooms.room_name,
-                    AVG((YEAR(CURRENT_DATE)-YEAR(students.birthday))-(RIGHT(CURRENT_DATE,5)<RIGHT(students.birthday,5))) AS age
-                    FROM rooms, students
-                    WHERE rooms.room_id=students.room_id
-                    GROUP BY rooms.room_id ORDER BY age LIMIT 5""")
+        request2 = RequestorSQL(host, user, passw, database,
+                                            """SELECT rooms.name,
+                                            AVG((YEAR(CURRENT_DATE) - YEAR(students.birthday)) -
+                                            (RIGHT(CURRENT_DATE, 5) < RIGHT(students.birthday, 5))) AS age
+                                            FROM rooms JOIN students ON rooms.id = students.room
+                                            GROUP BY rooms.id ORDER BY age LIMIT 5""")
         req2 = request2.request()
         choice = Choicer().choice(req2, format)
         choice.save()
+        print('Request 2 well done!')
     elif request == '3':
-        request3 = RequestorSQL(host, user, passw, database, """SELECT rooms.room_id,
-        YEAR(MAX(students.birthday))-YEAR(MIN(students.birthday))-(RIGHT(MAX(students.birthday),5)<RIGHT(MIN(students.birthday),5)) AS difference
-        FROM rooms, students
-        WHERE rooms.room_id=students.room_id
-        GROUP BY room_id ORDER BY difference DESC LIMIT 5""")
+        request3 = RequestorSQL(host, user, passw, database,
+                                            """SELECT rooms.name,
+                                            YEAR(MAX(students.birthday)) - YEAR(MIN(students.birthday)) -
+                                            (RIGHT(MAX(students.birthday), 5) < RIGHT(MIN(students.birthday), 5)) AS difference
+                                            FROM rooms JOIN students ON rooms.id = students.room
+                                            GROUP BY rooms.id ORDER BY difference DESC LIMIT 5""")
         req3 = request3.request()
         choice = Choicer().choice(req3, format)
         choice.save()
+        print('Request 3 well done!')
     elif request == '4':
-        request4 = RequestorSQL(host, user, passw, database, """SELECT rooms.room_name FROM students, rooms
-                                                                WHERE students.room_id = rooms.room_id
-                                                                GROUP BY rooms.room_id
+        request4 = RequestorSQL(host, user, passw, database, """SELECT rooms.name
+                                                                FROM rooms JOIN students ON rooms.id = students.room
+                                                                GROUP BY rooms.id
                                                                 HAVING COUNT(DISTINCT students.sex) = 2""")
         req4 = request4.request()
         choice = Choicer().choice(req4, format)
         choice.save()
+        print('Request 4 well done!')
 
-    print('Well done!')
+
 
 # Оптимизация запросов с использованием индексов на мой взгляд нецелесообразна, т.к.
 # мы группируемся по колонкам, которые являются Primary Key для таблиц (room_id в rooms).
