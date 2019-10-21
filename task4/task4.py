@@ -25,14 +25,14 @@ class Transformer:
     def __init__(self, data):
         self.data = data
 
-    def save(self):
+    def save(self, name):
         raise NotImplementedError('Redefine save in %s.' % (self.__class__.__name__))
 
 
 class JsonTransformer(Transformer):
 
-    def save(self):
-        with open('result.json', 'w') as json_result:
+    def save(self, name):
+        with open(name + '.json', 'w') as json_result:
             json.dump(self.data, json_result, ensure_ascii=False, default=str, indent=4, separators=(',', ': '))
 
 
@@ -53,8 +53,8 @@ class XmlTransformer(Transformer):
             return "\n".join(result_list)
         return "%s%s" % (line_padding, json_file)
 
-    def save(self):
-        with open('result.xml', 'w') as xml_result:
+    def save(self, name):
+        with open(name + '.xml', 'w') as xml_result:
             xml_result.write(self.json2xml(self.data))
 
 
@@ -67,162 +67,102 @@ class Choicer:
             return XmlTransformer(data)
 
 
-class CreaterSQL:
+class Connector:
 
-    def __init__(self, host: str, user: str, passw: str, db: str, sql: str):
+    def __init__(self, host: str, user: str, passw: str, db: str):
         self.host = host
         self.user = user
         self.passw = passw
         self.db = db
-        self.sql = sql
+        self.connect = pymysql.connect(self.host, self.user, self.passw, self.db)
+        self.cursor = self.connect.cursor()
 
-    def create(self):
-        raise NotImplementedError('Redefine create in %s.' % (self.__class__.__name__))
+    def disconnect(self):
+        self.cursor.close()
+        self.connect.close()
 
 
-class CreateDB(CreaterSQL):
+class Creater(Connector):
 
-    def create(self):
-        db = pymysql.connect(self.host, self.user, self.passw)
-        cursor = db.cursor()
+    def create(self, sql: str):
         try:
-            cursor.execute("DROP DATABASE IF EXISTS {}".format(self.db))
-            cursor.execute(self.sql)
+            self.cursor.execute(sql)
         except pymysql.Error as e:
             print("MySQL Error [%d]: %s" % (e.args[0], e.args[1]))
-        finally:
-            db.close()
 
-class CreateTable(CreaterSQL):
 
-    def create(self):
-        db = pymysql.connect(self.host, self.user, self.passw, self.db)
+class Insertor(Connector):
+
+    def insert(self, data: list, sql: str):
+        values = [tuple(key.values()) for key in data]
         try:
-            cursor = db.cursor()
-            cursor.execute(self.sql)
+            self.cursor.executemany(sql, values)
+            self.connect.commit()
         except pymysql.Error as e:
             print("MySQL Error [%d]: %s" % (e.args[0], e.args[1]))
-        finally:
-            db.close()
+            self.connect.rollback()
 
-class UploaderJSONtoSQL:
 
-    def __init__(self, host: str, user: str, passw: str, db: str, data: list, sql: str):
-        self.host = host
-        self.user = user
-        self.passw = passw
-        self.db = db
-        self.data = data
-        self.sql = sql
+class Selector(Connector):
 
-    def upload(self):
-        values = [tuple(key.values()) for key in self.data]
-        db = pymysql.connect(self.host, self.user, self.passw, self.db)
-        cursor = db.cursor()
+    def select(self, sql: str):
         try:
-            cursor.executemany(self.sql, values)
-            db.commit()
-        except pymysql.Error as e:
-            print("MySQL Error [%d]: %s" % (e.args[0], e.args[1]))
-            db.rollback()
-        finally:
-            db.close()
-
-
-class RequestorSQL:
-
-    def __init__(self, host: str, user: str, passw: str, db: str, sql):
-        self.host = host
-        self.user = user
-        self.passw = passw
-        self.db = db
-        self.sql = sql
-
-    def request(self):
-        db = pymysql.connect(self.host, self.user, self.passw, self.db)
-        cursor = db.cursor()
-        try:
-            cursor.execute(self.sql)
-            out_data = [dict(zip([key[0] for key in cursor.description], row)) for row in cursor.fetchall()]
+            self.cursor.execute(sql)
+            out_data = [dict(zip([key[0] for key in self.cursor.description], row)) for row in self.cursor.fetchall()]
             return out_data
         except pymysql.Error as e:
             print("MySQL Error [%d]: %s" % (e.args[0], e.args[1]))
-        finally:
-            db.close()
 
 
-
-
-def run(students, rooms, format, host, user, passw, database, request):
+def run(students, rooms, format, host, user, passw, database):
     students = JsonLoader(students).read()
     rooms = JsonLoader(rooms).read()
-    db = CreateDB(host, user, passw, database, "CREATE DATABASE {}".format(database))
-    db.create()
+    db = Creater(host, user, passw, database)
+    db.create("""CREATE TABLE IF NOT EXISTS rooms (
+                         id INT NOT NULL PRIMARY KEY,
+                         name VARCHAR(10)
+                         ) engine=innodb default charset=utf8""")
+    db.create("""CREATE TABLE IF NOT EXISTS students (
+                         birthday DATE,
+                         id INT NOT NULL PRIMARY KEY,
+                         name VARCHAR(30),
+                         room INT,
+                         sex ENUM('M', 'F'),
+                         FOREIGN KEY (room) REFERENCES rooms(id) 
+                         ON DELETE SET NULL ON UPDATE SET NULL
+                         ) engine=innodb default charset=utf8""")
+    db.disconnect()
+    db = Insertor(host, user, passw, database)
+    db.insert(rooms, """INSERT INTO rooms (id, name) VALUES (%s,%s)""")
 
-    tableRooms = CreateTable(host, user, passw, database, """CREATE TABLE rooms (
-                                                                     id INT NOT NULL PRIMARY KEY,
-                                                                     name VARCHAR(10)
-                                                                     ) engine=innodb default charset=utf8""")
-    tableRooms.create()
+    db.insert(students, """INSERT INTO students (birthday, id, name, room, sex) 
+                    VALUES (%s, %s, %s, %s, %s)""")
+    db.disconnect()
 
-    tableStudents = CreateTable(host, user, passw, database, """CREATE TABLE students (
-                                                                     birthday DATE,
-                                                                     id INT NOT NULL PRIMARY KEY,
-                                                                     name VARCHAR(30),
-                                                                     room INT,
-                                                                     sex ENUM('M', 'F'),
-                                                                     FOREIGN KEY (room) REFERENCES rooms(id) 
-                                                                     ON DELETE SET NULL ON UPDATE SET NULL
-                                                                     ) engine=innodb default charset=utf8""")
-    tableStudents.create()
+    requests = dict(count_stud="""SELECT rooms.name, COUNT(students.id) AS num
+                                    FROM rooms
+                                    JOIN students ON rooms.id = students.room
+                                    GROUP BY rooms.id""",
+                    min_avg="""SELECT rooms.name,
+                                    AVG((YEAR(CURRENT_DATE) - YEAR(students.birthday)) -
+                                    (RIGHT(CURRENT_DATE, 5) < RIGHT(students.birthday, 5))) AS age
+                                    FROM rooms JOIN students ON rooms.id = students.room
+                                    GROUP BY rooms.id ORDER BY age LIMIT 5""",
+                    max_diff="""SELECT rooms.name,
+                                    YEAR(MAX(students.birthday)) - YEAR(MIN(students.birthday)) -
+                                    (RIGHT(MAX(students.birthday), 5) < RIGHT(MIN(students.birthday), 5)) AS difference
+                                    FROM rooms JOIN students ON rooms.id = students.room
+                                    GROUP BY rooms.id ORDER BY difference DESC LIMIT 5""",
+                    mf_rooms="""SELECT rooms.name
+                                    FROM rooms JOIN students ON rooms.id = students.room
+                                    GROUP BY rooms.id
+                                    HAVING COUNT(DISTINCT students.sex) = 2""")
 
-    uploadRoomsToSQL = UploaderJSONtoSQL(host, user, passw, database, rooms, """INSERT INTO rooms (id, name) VALUES (%s,%s)""")
-    uploadRoomsToSQL.upload()
-
-    uploadStudentsToSQL = UploaderJSONtoSQL(host, user, passw, database, students,
-                                            """INSERT INTO students (birthday, id, name, room, sex) 
-                                               VALUES (%s, %s, %s, %s, %s)""")
-    uploadStudentsToSQL.upload()
-    if request == '1':
-        request1 = RequestorSQL(host, user, passw, database, """SELECT rooms.name, COUNT(students.id) AS num
-                                                                FROM rooms
-                                                                JOIN students ON rooms.id = students.room
-                                                                GROUP BY rooms.id""")
-        req1 = request1.request()
-        choice = Choicer().choice(req1, format)
-        choice.save()
-        print('Request 1 well done!')
-    elif request == '2':
-        request2 = RequestorSQL(host, user, passw, database,
-                                            """SELECT rooms.name,
-                                            AVG((YEAR(CURRENT_DATE) - YEAR(students.birthday)) -
-                                            (RIGHT(CURRENT_DATE, 5) < RIGHT(students.birthday, 5))) AS age
-                                            FROM rooms JOIN students ON rooms.id = students.room
-                                            GROUP BY rooms.id ORDER BY age LIMIT 5""")
-        req2 = request2.request()
-        choice = Choicer().choice(req2, format)
-        choice.save()
-        print('Request 2 well done!')
-    elif request == '3':
-        request3 = RequestorSQL(host, user, passw, database,
-                                            """SELECT rooms.name,
-                                            YEAR(MAX(students.birthday)) - YEAR(MIN(students.birthday)) -
-                                            (RIGHT(MAX(students.birthday), 5) < RIGHT(MIN(students.birthday), 5)) AS difference
-                                            FROM rooms JOIN students ON rooms.id = students.room
-                                            GROUP BY rooms.id ORDER BY difference DESC LIMIT 5""")
-        req3 = request3.request()
-        choice = Choicer().choice(req3, format)
-        choice.save()
-        print('Request 3 well done!')
-    elif request == '4':
-        request4 = RequestorSQL(host, user, passw, database, """SELECT rooms.name
-                                                                FROM rooms JOIN students ON rooms.id = students.room
-                                                                GROUP BY rooms.id
-                                                                HAVING COUNT(DISTINCT students.sex) = 2""")
-        req4 = request4.request()
-        choice = Choicer().choice(req4, format)
-        choice.save()
-        print('Request 4 well done!')
+    request = Selector(host, user, passw, database)
+    for name, req in requests.items():
+        data = request.select(req)
+        Choicer().choice(data, format).save(name)
+    request.disconnect()
 
 
 
@@ -244,7 +184,6 @@ def main():
     parser.add_argument('-u', '--user', help='MySQL username.', default='root', required=True)
     parser.add_argument('-p', '--password', help='Password for MySQL.', required=True)
     parser.add_argument('-d', '--database', help='MySQL database name.', default='leverxtest', required=True)
-    parser.add_argument('-r', '--request', choices=['1', '2', '3', '4'], help='Request to database.', required=True)
     args = parser.parse_args()
     students = args.students_file
     rooms = args.rooms_file
@@ -253,8 +192,7 @@ def main():
     user = args.user
     passw = args.password
     database = args.database
-    request = args.request
-    run(students, rooms, format, host, user, passw, database, request)
+    run(students, rooms, format, host, user, passw, database)
 
 
 if __name__ == "__main__":
