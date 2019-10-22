@@ -3,7 +3,7 @@ import argparse
 import pymysql
 
 
-class Loader:
+class FileLoader:
 
     def __init__(self, input_file):
         self.file = input_file
@@ -12,12 +12,15 @@ class Loader:
         raise NotImplementedError('Redefine read in %s.' % (self.__class__.__name__))
 
 
-class JsonLoader(Loader):
+class JsonLoader(FileLoader):
 
     def read(self):
-        with open(self.file, 'r') as f:
-            data = json.load(f)
-            return data
+        try:
+            with open(self.file, 'r') as f:
+                data = json.load(f)
+        except json.JSONDecodeError:
+            print('Input file error')
+        return data
 
 
 class Transformer:
@@ -82,7 +85,7 @@ class Connector:
         self.connect.close()
 
 
-class Creater(Connector):
+class Creator(Connector):
 
     def create(self, sql: str):
         try:
@@ -117,7 +120,7 @@ class Selector(Connector):
 def run(students, rooms, format, host, user, passw, database):
     students = JsonLoader(students).read()
     rooms = JsonLoader(rooms).read()
-    db = Creater(host, user, passw, database)
+    db = Creator(host, user, passw, database)
     db.create("""CREATE TABLE IF NOT EXISTS rooms (
                          id INT NOT NULL PRIMARY KEY,
                          name VARCHAR(10)
@@ -131,6 +134,8 @@ def run(students, rooms, format, host, user, passw, database):
                          FOREIGN KEY (room) REFERENCES rooms(id) 
                          ON DELETE SET NULL ON UPDATE SET NULL
                          ) engine=innodb default charset=utf8""")
+    db.create("""CREATE INDEX room_birthday_index ON students(room, birthday)""")
+    db.create("""CREATE INDEX room_sex_index ON students(room, sex)""")
     db.disconnect()
     db = Insertor(host, user, passw, database)
     db.insert(rooms, """INSERT INTO rooms (id, name) VALUES (%s,%s)""")
@@ -141,7 +146,7 @@ def run(students, rooms, format, host, user, passw, database):
 
     requests = dict(count_stud="""SELECT rooms.name, COUNT(students.id) AS num
                                     FROM rooms
-                                    JOIN students ON rooms.id = students.room
+                                    LEFT JOIN students ON rooms.id = students.room
                                     GROUP BY rooms.id""",
                     min_avg="""SELECT rooms.name,
                                     AVG((YEAR(CURRENT_DATE) - YEAR(students.birthday)) -
@@ -156,7 +161,7 @@ def run(students, rooms, format, host, user, passw, database):
                     mf_rooms="""SELECT rooms.name
                                     FROM rooms JOIN students ON rooms.id = students.room
                                     GROUP BY rooms.id
-                                    HAVING COUNT(DISTINCT students.sex) = 2""")
+                                    HAVING COUNT(DISTINCT students.sex) > 1""")
 
     request = Selector(host, user, passw, database)
     for name, req in requests.items():
@@ -164,15 +169,6 @@ def run(students, rooms, format, host, user, passw, database):
         Choicer().choice(data, format).save(name)
     request.disconnect()
 
-
-
-# Оптимизация запросов с использованием индексов на мой взгляд нецелесообразна, т.к.
-# мы группируемся по колонкам, которые являются Primary Key для таблиц (room_id в rooms).
-# Во время создания таблиц неявно создается индекс для колонки, которая является Primary Key.
-# Использование индекса для колонок, которые используются в агрегатных функциях,
-# не принесет явной оптимизации, т.к. количество записей, которые будут обрабатываться
-# этими функциями, мало.
-# Но это не точно)
 
 
 def main():
