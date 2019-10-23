@@ -2,15 +2,16 @@ import json
 import argparse
 
 
-class Loader:
-    def __init__(self, input_file):
+class FileLoader:
+
+    def __init__(self, input_file: str):
         self.file = input_file
 
     def read(self):
         raise NotImplementedError('Redefine read in %s.' % (self.__class__.__name__))
 
 
-class JsonLoader(Loader):
+class JsonLoader(FileLoader):
 
     def read(self):
         with open(self.file, 'r') as f:
@@ -19,7 +20,8 @@ class JsonLoader(Loader):
 
 
 class Transformer:
-    def __init__(self, data):
+
+    def __init__(self, data: list):
         self.data = data
 
     def save(self):
@@ -27,12 +29,14 @@ class Transformer:
 
 
 class JsonTransformer(Transformer):
+
     def save(self):
         with open('result.json', 'w') as json_result:
             json.dump(self.data, json_result, indent=4)
 
 
 class XmlTransformer(Transformer):
+
     def json2xml(self, json_file, line_padding=""):
         result_list = list()
         json_obj_type = type(json_file)
@@ -55,29 +59,35 @@ class XmlTransformer(Transformer):
 
 
 class Choicer:
-    def choice(self, data, format):
+
+    def choice(self, data: list, format: str):
         if format == 'json':
             return JsonTransformer(data)
         elif format == 'xml':
             return XmlTransformer(data)
 
 
-class Merge:
-    def __init__(self, students, rooms):
+class Merger:
+
+    def __init__(self, students: list, rooms: list):
         self.students = students
         self.rooms = rooms
 
     def merge(self):
-        data = []
-        [data.append({'room': i, 'students': []}) for i in range(len(self.rooms))]
-        [data[i['room']]['students'].append(i) for i in self.students]
-        return data
+        temp_students = dict()
+        for student in self.students:
+            if student['room'] not in temp_students:
+                temp_students[student['room']] = []
+            temp_students[student['room']].append(student)
+        for room in self.rooms:
+            room['students'] = temp_students[room['id']]
+        return self.rooms
 
 
-def run(students, rooms, format):
+def run(students: str, rooms: str, format: str):
     students = JsonLoader(students).read()
     rooms = JsonLoader(rooms).read()
-    data = Merge(students, rooms).merge()
+    data = Merger(students, rooms).merge()
     choice = Choicer().choice(data, format)
     choice.save()
 
