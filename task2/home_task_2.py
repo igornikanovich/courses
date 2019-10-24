@@ -1,60 +1,44 @@
-import re
+from functools import total_ordering
+from itertools import groupby
 
 
+@total_ordering
 class Version:
 
-    SemVerRE = re.compile(
-        r"""
-        ^(?P<major>(0|[1-9]\d*))\.
-        (?P<minor>(0|[1-9]\d*))\.
-        (?P<patch>(0|[1-9]\d*))
-        (?:-(?P<prerelease>
-            (?:0|[0-9A-Za-z-][0-9A-Za-z-]*)
-            (?:\.(?:0|[0-9A-Za-z-][0-9A-Za-z-]*))*
-        ))?
-        (?:\+(?P<buildmetadata>[0-9A-Za-z-]+(?:\.[0-9A-Za-z]+)*))?
-        """, re.VERBOSE)
-
-    def __init__(self, version):
-        MatchRE = self.SemVerRE.match(version)
-        self.major = int(MatchRE.group('major'))
-        self.minor = int(MatchRE.group('minor'))
-        self.patch = int(MatchRE.group('patch'))
-        self.prerelease = MatchRE.group('prerelease')
-        self.buildmetadata = MatchRE.group('buildmetadata')
+    def __init__(self, version: str):
+        self.version, self.prerelease = self.parse_values(version)
 
     def __lt__(self, other):
-        if self.major < other.major:
+        if self.version < other.version:
             return True
-        elif other.major < self.major:
+        elif other.version < self.version:
             return False
-        elif self.minor < other.minor:
-            return True
-        elif other.minor < self.minor:
+        elif len(self.prerelease) == 0 and len(other.prerelease) != 0:
             return False
-        elif self.patch < other.patch:
-            return True
-        elif other.patch < self.patch:
-            return False
-        elif self.prerelease is None and other.prerelease is not None:
-            return False
-        elif self.prerelease is not None and other.prerelease is None:
+        elif len(self.prerelease) != 0 and len(other.prerelease) == 0:
             return True
         elif self.prerelease < other.prerelease:
             return True
         elif other.prerelease < self.prerelease:
             return False
-        else:
-            return False
 
     def __eq__(self, other):
-        if self.major == other.major \
-                and self.minor == other.minor \
-                and self.patch == other.patch \
-                and self.prerelease == other.prerelease:
+        if self.version == other.version and self.prerelease == other.prerelease:
             return True
         else:
             return False
+
+    def parse_values(self, version):
+        version = version.replace('-', '.').split('.')
+        for i in range(3):
+            if version[i].isdigit():
+                version[i] = int(version[i])
+            else:
+                string_digit = ["".join(value) for _, value in groupby(version[i], str.isdigit)]
+                for j in range(len(string_digit)):
+                    if string_digit[j].isdigit():
+                        version[i] = int(string_digit[j])
+        return version[:3], version[3:]
 
 
 def main():
@@ -75,7 +59,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-print(Version('1.0.1b') > Version('1.0.10-alpha.beta'))
-print(Version('0.3.0b') < Version('1.2.42'))
-print(Version('1.0.0-rc.1') < Version('1.0.0'))
