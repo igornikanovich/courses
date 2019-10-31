@@ -31,13 +31,16 @@ class Version:
     def parse_values(self, version):
         version = version.replace('-', '.').split('.')
         for i in range(3):
-            if version[i].isdigit():
-                version[i] = int(version[i])
-            else:
-                string_digit = ["".join(value) for _, value in groupby(version[i], str.isdigit)]
-                for j in range(len(string_digit)):
-                    if string_digit[j].isdigit():
-                        version[i] = int(string_digit[j])
+            try:
+                if version[i].isdigit():
+                    version[i] = int(version[i])
+                else:
+                    string_digit = ["".join(value) for _, value in groupby(version[i], str.isdigit)]
+                    for id, item in enumerate(string_digit):
+                        if item.isdigit():
+                            version[i] = int(item)
+            except IndexError:
+                return version[:3], version[3:]
         return version[:3], version[3:]
 
 
@@ -49,6 +52,7 @@ def main():
         ('1.1.0-alpha', '1.2.0-alpha.1'),
         ('1.0.1b', '1.0.10-alpha.beta'),
         ('1.0.0-rc.1', '1.0.0'),
+        ('1.0', '1.1'),
     ]
 
     for version_1, version_2 in to_test:
