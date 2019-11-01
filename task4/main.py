@@ -5,10 +5,10 @@ from file_transformer import Choicer
 from db_operations import Creator, Insertor, Selector
 
 
-def run(students, rooms, format, host, user, passw, database):
+def run(students, rooms, format, config):
     students = JsonLoader(students).read()
     rooms = JsonLoader(rooms).read()
-    db = Creator(host, user, passw, database)
+    db = Creator(config)
     db.create("""CREATE TABLE IF NOT EXISTS rooms (
                          id INT NOT NULL PRIMARY KEY,
                          name VARCHAR(10)
@@ -25,7 +25,7 @@ def run(students, rooms, format, host, user, passw, database):
     db.create("""CREATE INDEX room_birthday_index ON students(room, birthday)""")
     db.create("""CREATE INDEX room_sex_index ON students(room, sex)""")
     db.disconnect()
-    db = Insertor(host, user, passw, database)
+    db = Insertor(config)
     db.insert(rooms, """INSERT INTO rooms (id, name) VALUES (%s,%s)""")
 
     db.insert(students, """INSERT INTO students (birthday, id, name, room, sex) 
@@ -50,7 +50,7 @@ def run(students, rooms, format, host, user, passw, database):
                                     GROUP BY rooms.id
                                     HAVING COUNT(DISTINCT students.sex) > 1""")
 
-    request = Selector(host, user, passw, database)
+    request = Selector(config)
     for name, req in requests.items():
         data = request.select(req)
         Choicer().choice(data, format).save(name)
@@ -71,11 +71,8 @@ def main():
     students = args.students_file
     rooms = args.rooms_file
     format = args.out_format
-    host = args.hostname
-    user = args.user
-    passw = args.password
-    database = args.database
-    run(students, rooms, format, host, user, passw, database)
+    config = {'host': args.hostname, 'user': args.user, 'password': args.password, 'database': args.database}
+    run(students, rooms, format, config)
 
 
 if __name__ == "__main__":
